@@ -44,6 +44,9 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
           path.includes('node_modules/') || 
           path.includes('.git/') || 
           path.includes('dist/') ||
+          path.startsWith('.') ||
+          path.includes('/.') ||
+          path.includes('tailwind.config.') || // Example of often large/unnecessary config files if not needed
           path.includes('.DS_Store')
         ) continue;
 

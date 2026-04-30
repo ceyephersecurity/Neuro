@@ -52,6 +52,8 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
           path.includes('node_modules/') || 
           path.includes('.git/') || 
           path.includes('dist/') ||
+          path.startsWith('.') ||
+          path.includes('/.') ||
           path.includes('.DS_Store') ||
           !path
         ) continue;
