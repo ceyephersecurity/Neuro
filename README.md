@@ -38,15 +38,16 @@ If you are running this app on your own machine:
 
 ### 1. GitHub OAuth App
 1. Create a "New OAuth App" in [GitHub Settings](https://github.com/settings/developers).
-2. **Homepage URL**: `http://localhost:3000`
-3. **Authorization callback URL**: `http://localhost:3000/auth/callback`
+2. **Homepage URL**: `http://localhost:3000` (or `http://localhost:3001` if that's your port)
+3. **Authorization callback URL**: `http://localhost:3000/auth/callback` (or `http://localhost:3001/auth/callback`)
 
 ### 2. Local Environment
 Create a `.env` file in the root directory:
 ```env
 GITHUB_CLIENT_ID="your_id"
 GITHUB_CLIENT_SECRET="your_secret"
-APP_URL="http://localhost:3000"
+APP_URL="http://localhost:3001"
+PORT=3001
 OLLAMA_HOST="http://localhost:11434"
 ```
 
