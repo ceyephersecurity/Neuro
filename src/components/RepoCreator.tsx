@@ -54,6 +54,12 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
         const isBinary = /\.(jpg|jpeg|png|gif|pdf|zip|exe|dll|so|o)$/i.test(file.name);
         if (isBinary) continue;
 
+        // Avoid extremely large files that might crash the push or hit limits
+        if (file.size > 1024 * 1024) {
+          console.warn(`Skipped ${path}: file too large (> 1MB)`);
+          continue;
+        }
+
         try {
           const content = await readFileAsText(file);
           data.push({ path, content });
@@ -95,7 +101,7 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
         
         await githubApi.pushFiles(repo.owner.login, repo.name, {
             message: 'initial: import from local directory',
-            files: selectedFiles
+            files: selectedFiles.slice(0, 500) // Limit to first 500 files for stability
         });
       }
 

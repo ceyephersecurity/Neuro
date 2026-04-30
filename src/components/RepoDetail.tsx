@@ -61,15 +61,20 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
         const isBinary = /\.(jpg|jpeg|png|gif|pdf|zip|exe|dll|so|o)$/i.test(file.name);
         if (isBinary) continue;
 
+        if (file.size > 1024 * 1024) {
+          console.warn(`Skipped ${path}: file too large (> 1MB)`);
+          continue;
+        }
+
         const content = await readFileAsText(file);
         data.push({ path, content });
       }
 
       if (data.length > 0) {
-        setStatus({ type: 'success', message: `Pushing ${data.length} files to GitHub...` });
+        setStatus({ type: 'success', message: `Pushing ${data.length} files... (Limited to 500 at once)` });
         await githubApi.pushFiles(repo.owner.login, repo.name, {
             message: `feat: bulk upload directory contents`,
-            files: data
+            files: data.slice(0, 500)
         });
         setStatus({ type: 'success', message: `Successfully pushed ${data.length} files!` });
         fetchContents(currentPath);

@@ -16,16 +16,16 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3001;
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  app.use(express.json({ limit: '100mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '100mb' }));
   app.use(cookieParser());
   app.use(session({
     secret: 'github-repo-manager-secret',
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: false,      // Works on localhost HTTP
-      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production', 
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
       httpOnly: true,
     }
   }));
