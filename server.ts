@@ -24,8 +24,8 @@ async function startServer() {
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === 'production', 
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      secure: true, 
+      sameSite: 'none',
       httpOnly: true,
     }
   }));
@@ -36,7 +36,7 @@ async function startServer() {
     const clientId = process.env.GITHUB_CLIENT_ID;
     const appUrl = process.env.APP_URL || 'http://localhost:3001';
     const redirectUri = `${appUrl}/auth/callback`;
-    const scope = 'repo';
+    const scope = 'repo delete_repo read:user';
     
     if (!clientId) {
       return res.status(500).json({ error: 'GITHUB_CLIENT_ID not configured' });
