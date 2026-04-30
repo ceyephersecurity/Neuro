@@ -4,17 +4,26 @@ import axios from "axios";
 import cookieSession from "cookie-session";
 import path from "path";
 import dotenv from "dotenv";
+import { fileURLToPath } from "url";
 
 dotenv.config();
 
-const app = express();
-
 /**
  * =========================
- * CONFIG
+ * ESM FIX (__dirname replacement)
  * =========================
  */
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/**
+ * =========================
+ * APP SETUP
+ * =========================
+ */
+
+const app = express();
 const PORT = process.env.PORT || 3001;
 
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID!;
@@ -59,53 +68,45 @@ function getToken(req: any): string | null {
 
 function requireAuth(req: any, res: any, next: any) {
   const token = getToken(req);
-  if (!token) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
+  if (!token) return res.status(401).json({ message: "Unauthorized" });
   next();
 }
 
 /**
  * =========================
- * AUTH ROUTES
+ * AUTH
  * =========================
  */
 
-app.get("/api/auth/url", (req, res) => {
-  const state = "random_state";
+app.get("/api/auth/url", (_req, res) => {
   const url =
     `https://github.com/login/oauth/authorize` +
     `?client_id=${GITHUB_CLIENT_ID}` +
     `&redirect_uri=${encodeURIComponent(GITHUB_CALLBACK_URL)}` +
-    `&scope=repo,user` +
-    `&state=${state}`;
+    `&scope=repo,user`;
 
   res.json({ url });
 });
 
-app.get("/auth/callback", async (req, res) => {
+app.get("/auth/callback", async (req: any, res) => {
   try {
-    const code = req.query.code as string;
+    const code = req.query.code;
 
     const tokenRes = await axios.post(
-      `https://github.com/login/oauth/access_token`,
+      "https://github.com/login/oauth/access_token",
       {
         client_id: GITHUB_CLIENT_ID,
         client_secret: GITHUB_CLIENT_SECRET,
         code,
       },
-      {
-        headers: { Accept: "application/json" },
-      }
+      { headers: { Accept: "application/json" } }
     );
 
-    const token = tokenRes.data.access_token;
-
-    req.session!.githubToken = token;
+    req.session.githubToken = tokenRes.data.access_token;
 
     return res.redirect("/");
   } catch (err) {
-    console.error("OAuth error:", err);
+    console.error(err);
     return res.redirect("/");
   }
 });
@@ -114,14 +115,12 @@ app.get("/api/auth/me", requireAuth, async (req: any, res) => {
   try {
     const token = getToken(req);
 
-    const userRes = await axios.get("https://api.github.com/user", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+    const user = await axios.get("https://api.github.com/user", {
+      headers: { Authorization: `Bearer ${token}` },
     });
 
-    res.json(userRes.data);
-  } catch (err) {
+    res.json(user.data);
+  } catch {
     res.status(401).json({ message: "Invalid session" });
   }
 });
@@ -142,14 +141,12 @@ app.get("/api/repos", requireAuth, async (req: any, res) => {
     const token = getToken(req);
 
     const repos = await axios.get("https://api.github.com/user/repos", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     res.json(repos.data);
-  } catch (err) {
-    res.status(500).json({ message: "Failed to fetch repos" });
+  } catch {
+    res.status(500).json({ message: "Failed repos" });
   }
 });
 
@@ -157,16 +154,9 @@ app.post("/api/repos", requireAuth, async (req: any, res) => {
   try {
     const token = getToken(req);
 
-    const { name, description, private: isPrivate, auto_init } = req.body;
-
     const repo = await axios.post(
       "https://api.github.com/user/repos",
-      {
-        name,
-        description,
-        private: isPrivate,
-        auto_init,
-      },
+      req.body,
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -178,70 +168,64 @@ app.post("/api/repos", requireAuth, async (req: any, res) => {
     res.json(repo.data);
   } catch (err: any) {
     res.status(500).json({
-      message: err?.response?.data?.message || "Repo creation failed",
+      message: err?.response?.data?.message || "Create failed",
     });
   }
 });
 
 /**
- * PUSH FILES (FIXED)
+ * =========================
+ * PUSH FILES
+ * =========================
  */
 
-app.post(
-  "/api/repos/:owner/:repo/push",
-  requireAuth,
-  async (req: any, res) => {
-    try {
-      const token = getToken(req);
-      const { owner, repo } = req.params;
-      const { files, message } = req.body;
+app.post("/api/repos/:owner/:repo/push", requireAuth, async (req: any, res) => {
+  try {
+    const token = getToken(req);
+    const { owner, repo } = req.params;
+    const { files, message } = req.body;
 
-      const results = [];
+    const results = [];
 
-      for (const file of files) {
-        const contentBase64 = Buffer.from(file.content).toString("base64");
+    for (const file of files) {
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`;
 
-        const url = `https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`;
+      let sha;
 
-        let sha: string | undefined;
+      try {
+        const existing = await axios.get(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        sha = existing.data.sha;
+      } catch {}
 
-        try {
-          const existing = await axios.get(url, {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          });
-          sha = existing.data.sha;
-        } catch {}
+      const content = Buffer.from(file.content).toString("base64");
 
-        const result = await axios.put(
-          url,
-          {
-            message,
-            content: contentBase64,
-            sha,
+      const result = await axios.put(
+        url,
+        { message, content, sha },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
           },
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: "application/vnd.github+json",
-            },
-          }
-        );
+        }
+      );
 
-        results.push(result.data);
-      }
-
-      res.json({ success: true, results });
-    } catch (err: any) {
-      console.error(err?.response?.data || err);
-      res.status(500).json({ message: "Push failed" });
+      results.push(result.data);
     }
+
+    res.json({ success: true, results });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Push failed" });
   }
-);
+});
 
 /**
- * DELETE REPO (FIXED)
+ * =========================
+ * DELETE REPO
+ * =========================
  */
 
 app.delete("/api/repos/:owner/:repo", requireAuth, async (req: any, res) => {
@@ -257,20 +241,18 @@ app.delete("/api/repos/:owner/:repo", requireAuth, async (req: any, res) => {
     });
 
     res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({
-      message: err?.response?.data?.message || "Delete failed",
-    });
+  } catch {
+    res.status(500).json({ message: "Delete failed" });
   }
 });
 
 /**
  * =========================
- * STATIC (VITE)
+ * STATIC VITE BUILD (FIXED FOR ESM)
  * =========================
  */
 
-const clientDist = path.join(__dirname, "dist");
+const clientDist = path.resolve(__dirname, "dist");
 
 app.use(express.static(clientDist));
 
@@ -280,7 +262,7 @@ app.get("*", (_req, res) => {
 
 /**
  * =========================
- * START
+ * START SERVER
  * =========================
  */
 
