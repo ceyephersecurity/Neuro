@@ -1,228 +1,244 @@
-import express from 'express';
-import { createServer as createViteServer } from 'vite';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import session from 'express-session';
-import axios from 'axios';
-import dotenv from 'dotenv';
-import qs from 'qs';
+import express from "express";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import axios from "axios";
+import dotenv from "dotenv";
 
 dotenv.config();
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
+const PORT = process.env.PORT || 3001;
 
-const isProd = process.env.NODE_ENV === 'production';
+/**
+ * =========================
+ * MIDDLEWARE
+ * =========================
+ */
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 
-async function startServer() {
-  const app = express();
-  const PORT = Number(process.env.PORT) || 3001;
+app.use(express.json({ limit: "10mb" }));
+app.use(cookieParser());
 
-  // IMPORTANT: required behind proxies (fixes cookie issues in dev/prod parity)
-  app.set('trust proxy', 1);
+/**
+ * =========================
+ * SIMPLE SESSION STORE
+ * (replace with DB in prod)
+ * =========================
+ */
+const sessions = new Map<string, { token: string }>();
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+function getSession(req: express.Request) {
+  const sessionId = req.headers["x-session-id"] as string || req.cookies?.session;
+  if (!sessionId) return null;
+  return sessions.get(sessionId) || null;
+}
 
-  // =========================
-  // SESSION CONFIG (FIXED)
-  // =========================
-  app.use(
-    session({
-      name: 'neuro.sid',
-      secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
-      resave: false,
-      saveUninitialized: false,
-      rolling: true,
-      cookie: {
-        httpOnly: true,
-        secure: false, // localhost MUST be false
-        sameSite: 'lax', // OAuth-safe for GitHub redirect
-        maxAge: 1000 * 60 * 60 * 24 * 7,
+function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const session = getSession(req);
+
+  if (!session?.token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  (req as any).token = session.token;
+  next();
+}
+
+/**
+ * =========================
+ * AUTH ROUTES
+ * =========================
+ */
+
+app.get("/api/auth/url", (req, res) => {
+  const url =
+    `https://github.com/login/oauth/authorize?client_id=${process.env.GITHUB_CLIENT_ID}&scope=repo`;
+
+  res.json({ url });
+});
+
+app.get("/api/auth/me", requireAuth, async (req, res) => {
+  try {
+    const token = (req as any).token;
+
+    const githubRes = await axios.get("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json"
+      }
+    });
+
+    res.json(githubRes.data);
+  } catch (err: any) {
+    res.status(500).json({
+      message: "Failed to fetch user",
+      error: err?.message
+    });
+  }
+});
+
+/**
+ * =========================
+ * REPO ROUTES
+ * =========================
+ */
+
+// LIST REPOS
+app.get("/api/repos", requireAuth, async (req, res) => {
+  try {
+    const token = (req as any).token;
+
+    const result = await axios.get("https://api.github.com/user/repos", {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    res.json(result.data);
+  } catch (err: any) {
+    res.status(500).json({ message: "Failed to fetch repos" });
+  }
+});
+
+// CREATE REPO
+app.post("/api/repos", requireAuth, async (req, res) => {
+  try {
+    const token = (req as any).token;
+
+    const { name, description, private: isPrivate, auto_init } = req.body;
+
+    const result = await axios.post(
+      "https://api.github.com/user/repos",
+      {
+        name,
+        description,
+        private: isPrivate,
+        auto_init
       },
-    })
-  );
-
-  // =========================
-  // DEBUG MIDDLEWARE
-  // =========================
-  app.use((req, res, next) => {
-    const token = (req.session as any)?.accessToken;
-    console.log(
-      `[${new Date().toISOString()}] ${req.method} ${req.url} | session=${
-        req.sessionID
-      } | token=${!!token}`
+      {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }
     );
-    next();
-  });
 
-  // =========================
-  // AUTH URL
-  // =========================
-  app.get('/api/auth/url', (req, res) => {
-    const clientId = process.env.GITHUB_CLIENT_ID;
-    const appUrl = process.env.APP_URL || 'http://localhost:3001';
+    res.json(result.data);
+  } catch (err: any) {
+    res.status(500).json({ message: "Repo creation failed" });
+  }
+});
 
-    const redirectUri = `${appUrl}/auth/callback`;
+/**
+ * =========================
+ * 🔥 FIXED PUSH ROUTE (YOUR 404)
+ * =========================
+ */
+app.post("/api/repos/:owner/:repo/push", requireAuth, async (req, res) => {
+  try {
+    const token = (req as any).token;
+    const { owner, repo } = req.params;
+    const { files, message, branch = "main" } = req.body;
 
-    if (!clientId) {
-      return res.status(500).json({ error: 'Missing GITHUB_CLIENT_ID' });
+    if (!files || !Array.isArray(files)) {
+      return res.status(400).json({ message: "Files required" });
     }
 
-    const url =
-      `https://github.com/login/oauth/authorize` +
-      `?client_id=${clientId}` +
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&scope=repo read:user delete_repo` +
-      `&state=random_state`;
+    // push files sequentially
+    let commitSha = "";
 
-    res.json({ url });
-  });
+    for (const file of files) {
+      const path = file.path;
+      const content = Buffer.from(file.content).toString("base64");
 
-  // =========================
-  // OAUTH CALLBACK (FIXED)
-  // =========================
-  app.get('/auth/callback', async (req, res) => {
-    const code = req.query.code as string;
-
-    if (!code) return res.status(400).send('Missing OAuth code');
-
-    try {
-      const tokenResponse = await axios.post(
-        'https://github.com/login/oauth/access_token',
+      const putRes = await axios.put(
+        `https://api.github.com/repos/${owner}/${repo}/contents/${path}`,
         {
-          client_id: process.env.GITHUB_CLIENT_ID,
-          client_secret: process.env.GITHUB_CLIENT_SECRET,
-          code,
+          message: message || "update",
+          content,
+          branch
         },
         {
           headers: {
-            Accept: 'application/json',
-          },
+            Authorization: `Bearer ${token}`
+          }
         }
       );
 
-      const accessToken = tokenResponse.data.access_token;
-
-      if (!accessToken) {
-        return res.status(400).send('No access token returned');
-      }
-
-      // CRITICAL FIX: ensure session persists BEFORE redirect
-      req.session.regenerate((err) => {
-        if (err) return res.status(500).send('Session regen failed');
-
-        (req.session as any).accessToken = accessToken;
-
-        req.session.save((err2) => {
-          if (err2) return res.status(500).send('Session save failed');
-
-          res.redirect('/');
-        });
-      });
-    } catch (err: any) {
-      console.error('OAuth error:', err?.response?.data || err.message);
-      res.status(500).send('OAuth failed');
-    }
-  });
-
-  // =========================
-  // AUTH ME (FIXED SAFETY)
-  // =========================
-  app.get('/api/auth/me', async (req, res) => {
-    const token = (req.session as any)?.accessToken;
-
-    if (!token) {
-      return res.status(401).json({ error: 'Not authenticated' });
+      commitSha = putRes.data?.commit?.sha || commitSha;
     }
 
-    try {
-      const user = await axios.get('https://api.github.com/user', {
-        headers: { Authorization: `token ${token}` },
-      });
-
-      res.json(user.data);
-    } catch (err) {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
-  });
-
-  // =========================
-  // LOGOUT
-  // =========================
-  app.post('/api/auth/logout', (req, res) => {
-    req.session.destroy(() => {
-      res.json({ success: true });
-    });
-  });
-
-  // =========================
-  // REPOS (FIXED ROUTE EXISTS ALWAYS)
-  // =========================
-  app.get('/api/repos', async (req, res) => {
-    const token = (req.session as any)?.accessToken;
-
-    if (!token) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-
-    try {
-      const repos = await axios.get(
-        'https://api.github.com/user/repos?sort=updated&per_page=100',
-        {
-          headers: { Authorization: `token ${token}` },
-        }
-      );
-
-      res.json(repos.data);
-    } catch (err: any) {
-      res.status(500).json(err?.response?.data || { error: 'Repo fetch failed' });
-    }
-  });
-
-  // =========================
-  // CREATE REPO (FIXED PARAMS)
-  // =========================
-  app.post('/api/repos', async (req, res) => {
-    const token = (req.session as any)?.accessToken;
-    if (!token) return res.status(401).json({ error: 'Not authenticated' });
-
-    try {
-      const result = await axios.post(
-        'https://api.github.com/user/repos',
-        req.body,
-        {
-          headers: { Authorization: `token ${token}` },
-        }
-      );
-
-      res.json(result.data);
-    } catch (err: any) {
-      console.error(err?.response?.data || err.message);
-      res.status(err?.response?.status || 500).json(err?.response?.data);
-    }
-  });
-
-  // =========================
-  // VITE / STATIC
-  // =========================
-  if (!isProd) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
+    res.json({
+      success: true,
+      commitSha
     });
 
-    app.use(vite.middlewares);
-  } else {
-    const dist = path.join(__dirname, 'dist');
-    app.use(express.static(dist));
-    app.get('*', (_, res) => {
-      res.sendFile(path.join(dist, 'index.html'));
+  } catch (err: any) {
+    console.error("PUSH ERROR:", err?.response?.data || err.message);
+
+    res.status(500).json({
+      message: "Push failed",
+      error: err?.response?.data || err.message
     });
   }
+});
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}
+/**
+ * =========================
+ * AUTH CALLBACK (IMPORTANT FIX)
+ * =========================
+ */
+app.get("/auth/callback", async (req, res) => {
+  try {
+    const code = req.query.code as string;
 
-startServer();
+    const tokenRes = await axios.post(
+      `https://github.com/login/oauth/access_token`,
+      {
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code
+      },
+      {
+        headers: {
+          Accept: "application/json"
+        }
+      }
+    );
+
+    const token = tokenRes.data.access_token;
+
+    const sessionId = Math.random().toString(36).substring(2);
+
+    sessions.set(sessionId, { token });
+
+    res.cookie("session", sessionId, {
+      httpOnly: true
+    });
+
+    res.redirect("/");
+  } catch (err) {
+    res.status(500).send("OAuth failed");
+  }
+});
+
+/**
+ * =========================
+ * VITE DEV FALLBACK
+ * =========================
+ */
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api")) return next();
+  res.send("Frontend handled by Vite");
+});
+
+/**
+ * =========================
+ * START SERVER
+ * =========================
+ */
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});
