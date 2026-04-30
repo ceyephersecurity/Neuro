@@ -1,0 +1,6 @@
+{
+  "name": "GitStream AI",
+  "description": "Create, manage, and push GitHub repositories with AI-powered commit messages and a clean web-based file editor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
