@@ -6,6 +6,7 @@ import session from 'express-session';
 import cookieParser from 'cookie-parser';
 import axios from 'axios';
 import dotenv from 'dotenv';
+import qs from 'qs';
 
 dotenv.config();
 
@@ -13,7 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3001;
 
   app.use(express.json());
   app.use(cookieParser());
@@ -22,8 +23,8 @@ async function startServer() {
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: true,      // Required for SameSite=None
-      sameSite: 'none',  // Required for cross-origin iframe
+      secure: false,      // Works on localhost HTTP
+      sameSite: 'lax',
       httpOnly: true,
     }
   }));
@@ -32,7 +33,8 @@ async function startServer() {
   
   app.get('/api/auth/url', (req, res) => {
     const clientId = process.env.GITHUB_CLIENT_ID;
-    const redirectUri = `${process.env.APP_URL}/auth/callback`;
+    const appUrl = process.env.APP_URL || 'http://localhost:3001';
+    const redirectUri = `${appUrl}/auth/callback`;
     const scope = 'repo';
     
     if (!clientId) {
@@ -47,12 +49,17 @@ async function startServer() {
     const { code } = req.query;
     
     try {
-      const response = await axios.post('https://github.com/login/oauth/access_token', {
+      const data = qs.stringify({
         client_id: process.env.GITHUB_CLIENT_ID,
         client_secret: process.env.GITHUB_CLIENT_SECRET,
         code,
-      }, {
-        headers: { Accept: 'application/json' }
+      });
+
+      const response = await axios.post('https://github.com/login/oauth/access_token', data, {
+        headers: { 
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
       });
 
       if (response.data.access_token) {
@@ -75,7 +82,7 @@ async function startServer() {
           </html>
         `);
       } else {
-        res.status(400).send('OAuth failed: No access token received');
+        res.status(400).send('OAuth failed: No access token received. ' + JSON.stringify(response.data));
       }
     } catch (error) {
       console.error('OAuth token exchange error:', error);
@@ -94,6 +101,8 @@ async function startServer() {
       });
       res.json(response.data);
     } catch (error) {
+       // @ts-ignore
+      console.error('Fetch user error:', error.response?.data || error.message);
       res.status(500).json({ error: 'Failed to fetch user' });
     }
   });
@@ -208,15 +217,21 @@ async function startServer() {
     const models = ['qwen2.5:3b', 'qwen2.5:1.5b', 'tinyllama:latest'];
     const ollamaHost = process.env.OLLAMA_HOST || 'http://localhost:11434';
 
+    // Safe handling of missing changes fields
+    const added = changes?.added || [];
+    const modified = changes?.modified || [];
+    const deleted = changes?.deleted || [];
+    const diffSummary = changes?.diffSummary || 'No specific diff summary provided.';
+
     const prompt = `Generate a concise Git commit message using conventional commits format.
 
 Changes:
-- Added: ${changes.added.join(', ') || 'none'}
-- Modified: ${changes.modified.join(', ') || 'none'}
-- Deleted: ${changes.deleted.join(', ') || 'none'}
+- Added: ${added.join(', ') || 'none'}
+- Modified: ${modified.join(', ') || 'none'}
+- Deleted: ${deleted.join(', ') || 'none'}
 
 Diff Summary:
-${changes.diffSummary || 'No specific diff summary provided.'}
+${diffSummary}
 
 Rules:
 - Use format: type(scope): short description

@@ -97,7 +97,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex overflow-hidden bg-white max-w-[1400px] mx-auto border-x border-soft-border">
+    <div className="h-screen flex overflow-hidden bg-white w-full">
       {/* Sidebar */}
       <aside className="w-64 bg-slate-900 hidden md:flex flex-col shrink-0 text-slate-300">
         <div className="p-6 border-b border-slate-800 flex items-center gap-3 cursor-pointer" onClick={() => { setSelectedRepo(null); setShowCreator(false); }}>

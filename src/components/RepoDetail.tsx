@@ -24,8 +24,15 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
   const [status, setStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
   useEffect(() => {
-    fetchContents(currentPath);
+    setCurrentPath('');
+    fetchContents('');
     fetchCommits();
+  }, [repo.full_name]);
+
+  useEffect(() => {
+    if (currentPath) {
+      fetchContents(currentPath);
+    }
   }, [currentPath]);
 
   const fetchContents = async (path: string) => {
