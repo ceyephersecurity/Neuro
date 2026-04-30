@@ -21,17 +21,13 @@ async function startServer() {
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: '100mb' }));
   
-  const isDev = process.env.NODE_ENV !== 'production';
-
   app.use(session({
-    secret: 'github-repo-manager-secret-v4', // Force fresh sessions
+    secret: 'github-repo-manager-secret-v6',
     resave: false,
-    saveUninitialized: true, // Force a session cookie so we can track the visitor
-    name: 'gh_session',
-    proxy: true,
+    saveUninitialized: false,
     cookie: {
-      secure: true, 
-      sameSite: 'none',
+      secure: false,        // MUST be false on localhost HTTP
+      sameSite: 'lax',      // CRITICAL FIX
       httpOnly: true,
       maxAge: 1000 * 60 * 60 * 24 * 7
     }
@@ -40,7 +36,7 @@ async function startServer() {
   // Diagnostic middleware
   app.use((req, res, next) => {
     // @ts-ignore
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Session ID: ${req.sessionID} - HasToken: ${!!req.session.accessToken}`);
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Session ID: ${req.sessionID} - HasToken: ${!!req.session.accessToken} - Cookies: ${req.headers.cookie || 'none'}`);
     next();
   });
 
