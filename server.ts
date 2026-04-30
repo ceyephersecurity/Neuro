@@ -135,6 +135,9 @@ async function startServer() {
     // @ts-ignore
     const token = req.session.accessToken;
     const { name, description, private: isPrivate, auto_init } = req.body;
+    
+    console.log("CREATE REPO ATTEMPT - BODY:", req.body);
+    
     if (!token) return res.status(401).json({ error: 'Not authenticated' });
 
     try {
@@ -149,7 +152,28 @@ async function startServer() {
       res.json(response.data);
     } catch (error) {
       // @ts-ignore
+      console.error('Create repo error:', error.response?.data || error.message);
+      // @ts-ignore
       res.status(error.response?.status || 500).json(error.response?.data || { error: 'Failed to create repo' });
+    }
+  });
+
+  app.delete('/api/repos/:owner/:repo', async (req, res) => {
+    // @ts-ignore
+    const token = req.session.accessToken;
+    const { owner, repo } = req.params;
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+
+    try {
+      await axios.delete(`https://api.github.com/repos/${owner}/${repo}`, {
+        headers: { Authorization: `token ${token}` }
+      });
+      res.json({ success: true });
+    } catch (error) {
+      // @ts-ignore
+      console.error('Delete repo error:', error.response?.data || error.message);
+      // @ts-ignore
+      res.status(error.response?.status || 500).json(error.response?.data || { error: 'Failed to delete repo' });
     }
   });
 

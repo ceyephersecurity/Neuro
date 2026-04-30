@@ -80,6 +80,12 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
     }
   };
 
+  const handleNameChange = (val: string) => {
+    // GitHub repo names: lowercase, alphanumeric, hyphen, period, underscore
+    const sanitized = val.toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+    setName(sanitized);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name) return;
@@ -87,7 +93,7 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
     setLoading(true);
     setError(null);
     try {
-      // Force auto_init: true if we're uploading a folder, so we have a 'main' branch to push to
+      // Create Repo
       const repo = await githubApi.createRepo({
         name,
         description,
@@ -96,17 +102,16 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
       });
 
       if (uploadMode === 'folder' && selectedFiles.length > 0) {
-        // Wait for GitHub to stabilize the fresh repo
         await new Promise(r => setTimeout(r, 2000));
         
-        // Push files in batches to avoid 413 Payload Too Large errors
-        const BATCH_SIZE = 20;
+        // Much smaller batch size to avoid 413 Payload Too Large
+        const BATCH_SIZE = 5; 
         for (let i = 0; i < selectedFiles.length; i += BATCH_SIZE) {
           const batch = selectedFiles.slice(i, i + BATCH_SIZE);
           setError(`Pushing files (${i + 1} to ${Math.min(i + BATCH_SIZE, selectedFiles.length)} of ${selectedFiles.length})...`);
           
           await githubApi.pushFiles(repo.owner.login, repo.name, {
-              message: `initial: import from local directory (batch ${Math.floor(i / BATCH_SIZE) + 1})`,
+              message: `initial: import local directory (batch ${Math.floor(i / BATCH_SIZE) + 1})`,
               files: batch
           });
         }
@@ -114,8 +119,16 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
 
       onCreated(repo);
     } catch (err: any) {
-      console.error(err);
-      setError(err.response?.data?.message || 'Failed to create repository');
+      console.error('Submit Error:', err);
+      const msg = err.response?.data?.message || err.message;
+      
+      if (err.response?.status === 422) {
+        setError(`A repository named "${name}" already exists on your account, or the name is invalid.`);
+      } else if (err.response?.status === 413) {
+        setError('Batch upload too large. Trying smaller batches might help, but some files might be too big.');
+      } else {
+        setError(msg || 'Failed to create repository');
+      }
     } finally {
       setLoading(false);
     }
@@ -202,7 +215,7 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
             className="w-full px-4 py-2.5 rounded-md border border-soft-border bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm"
             placeholder="my-project"
             value={name}
-            onChange={(e) => setName(e.target.value.toLowerCase().replace(/ /g, '-'))}
+            onChange={(e) => handleNameChange(e.target.value)}
           />
         </div>
 

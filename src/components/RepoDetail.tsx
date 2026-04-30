@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Repository, FileContent, Commit } from '../types';
 import { githubApi, aiApi } from '../lib/api';
-import { ChevronLeft, Folder, File, ArrowLeft, History, Edit, Save, Terminal, Wand2, Loader2, CheckCircle, AlertCircle, FolderUp } from 'lucide-react';
+import { ChevronLeft, Folder, File, ArrowLeft, History, Edit, Save, Terminal, Wand2, Loader2, CheckCircle, AlertCircle, FolderUp, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface RepoDetailProps {
@@ -23,7 +23,25 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
   const [isCommitting, setIsCommitting] = useState(false);
   const [isPushingFolder, setIsPushingFolder] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDeleteRepo = async () => {
+    if (!window.confirm(`Are you absolutely sure you want to delete ${repo.full_name}? This action cannot be undone.`)) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      await githubApi.deleteRepo(repo.owner.login, repo.name);
+      onBack();
+      onRefresh();
+    } catch (err: any) {
+      console.error(err);
+      setStatus({ type: 'error', message: 'Failed to delete repository: ' + (err.response?.data?.message || err.message) });
+      setIsDeleting(false);
+    }
+  };
 
   const readFileAsText = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -71,15 +89,15 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
       }
 
       if (data.length > 0) {
-        setStatus({ type: 'success', message: `Pushing ${data.length} files in batches...` });
+        setStatus({ type: 'success', message: `Pushing ${data.length} files in small batches...` });
         
-        const BATCH_SIZE = 20;
+        const BATCH_SIZE = 5;
         for (let i = 0; i < data.length; i += BATCH_SIZE) {
           const batch = data.slice(i, i + BATCH_SIZE);
-          setStatus({ type: 'success', message: `Pushing batch ${Math.floor(i/BATCH_SIZE) + 1}...` });
+          setStatus({ type: 'success', message: `Pushing batch ${Math.floor(i/BATCH_SIZE) + 1} of ${Math.ceil(data.length/BATCH_SIZE)}...` });
           
           await githubApi.pushFiles(repo.owner.login, repo.name, {
-              message: `feat: bulk upload directory contents (batch ${Math.floor(i/BATCH_SIZE) + 1})`,
+              message: `feat: bulk upload directory (batch ${Math.floor(i/BATCH_SIZE) + 1})`,
               files: batch
           });
         }
@@ -245,6 +263,15 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
               Push Changes
             </button>
           )}
+          <button
+            onClick={handleDeleteRepo}
+            disabled={isDeleting}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:opacity-50"
+            title="Delete Repository"
+          >
+            {isDeleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            <span className="hidden sm:inline">Delete Repo</span>
+          </button>
         </div>
       </header>
 
