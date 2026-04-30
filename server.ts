@@ -16,22 +16,20 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3001;
 
-  app.set('trust proxy', true);
+  app.set('trust proxy', 1);
 
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: '100mb' }));
-  app.use(cookieParser());
   
   const isDev = process.env.NODE_ENV !== 'production';
 
   app.use(session({
-    secret: 'github-repo-manager-secret-v3', // Force fresh sessions
-    resave: true,
-    saveUninitialized: false,
+    secret: 'github-repo-manager-secret-v4', // Force fresh sessions
+    resave: false,
+    saveUninitialized: true, // Force a session cookie so we can track the visitor
     name: 'gh_session',
     proxy: true,
     cookie: {
-      // In AI Studio preview (iframe), SameSite=None and Secure=true are usually required.
       secure: true, 
       sameSite: 'none',
       httpOnly: true,
@@ -83,21 +81,29 @@ async function startServer() {
         // @ts-ignore
         req.session.accessToken = response.data.access_token;
         
-        res.send(`
-          <html>
-            <body>
-              <script>
-                if (window.opener) {
-                  window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
-                  window.close();
-                } else {
-                  window.location.href = '/';
-                }
-              </script>
-              <p>Authentication successful. This window should close automatically.</p>
-            </body>
-          </html>
-        `);
+        // Explicitly save the session before sending the response
+        req.session.save((err) => {
+          if (err) {
+            console.error('Session save error:', err);
+            return res.status(500).send('Authentication failed: Could not save session');
+          }
+          
+          res.send(`
+            <html>
+              <body>
+                <script>
+                  if (window.opener) {
+                    window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+                    window.close();
+                  } else {
+                    window.location.href = '/';
+                  }
+                </script>
+                <p>Authentication successful. This window should close automatically.</p>
+              </body>
+            </html>
+          `);
+        });
       } else {
         res.status(400).send('OAuth failed: No access token received. ' + JSON.stringify(response.data));
       }
