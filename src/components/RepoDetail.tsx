@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Repository, FileContent, Commit } from '../types';
 import { githubApi, aiApi } from '../lib/api';
-import { ChevronLeft, Folder, File, ArrowLeft, History, Edit, Save, Terminal, Wand2, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { ChevronLeft, Folder, File, ArrowLeft, History, Edit, Save, Terminal, Wand2, Loader2, CheckCircle, AlertCircle, FolderUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface RepoDetailProps {
@@ -21,7 +21,68 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
   const [commitMessage, setCommitMessage] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [isPushingFolder, setIsPushingFolder] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+  };
+
+  const handleBulkFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = e.target.files;
+    if (!selectedFiles) return;
+
+    setIsPushingFolder(true);
+    setStatus({ type: 'success', message: 'Reading local folder...' });
+    
+    try {
+      const data: { path: string, content: string }[] = [];
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        // Skip hidden files and common ignored directories
+        const path = file.webkitRelativePath.split('/').slice(1).join('/');
+        
+        if (
+          path.includes('node_modules/') || 
+          path.includes('.git/') || 
+          path.includes('dist/') ||
+          path.includes('.DS_Store') ||
+          !path
+        ) continue;
+
+        const isBinary = /\.(jpg|jpeg|png|gif|pdf|zip|exe|dll|so|o)$/i.test(file.name);
+        if (isBinary) continue;
+
+        const content = await readFileAsText(file);
+        data.push({ path, content });
+      }
+
+      if (data.length > 0) {
+        setStatus({ type: 'success', message: `Pushing ${data.length} files to GitHub...` });
+        await githubApi.pushFiles(repo.owner.login, repo.name, {
+            message: `feat: bulk upload directory contents`,
+            files: data
+        });
+        setStatus({ type: 'success', message: `Successfully pushed ${data.length} files!` });
+        fetchContents(currentPath);
+        fetchCommits();
+      } else {
+        setStatus({ type: 'error', message: 'No valid files found in folder.' });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setStatus({ type: 'error', message: 'Folder upload failed: ' + (err.response?.data?.message || err.message) });
+    } finally {
+      setIsPushingFolder(false);
+      if (folderInputRef.current) folderInputRef.current.value = '';
+    }
+  };
 
   useEffect(() => {
     setCurrentPath('');
@@ -177,9 +238,29 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
         <div className="w-64 border-r border-soft-border flex flex-col bg-slate-50">
           <div className="p-4 border-b border-soft-border bg-white flex items-center justify-between">
             <h4 className="text-xs font-bold text-slate-500 uppercase tracking-tight">Explorer</h4>
-            {currentPath && (
-              <button onClick={goBackPath} className="text-[10px] text-indigo-600 hover:underline">UP</button>
-            )}
+            <div className="flex gap-2">
+              <input 
+                type="file" 
+                ref={folderInputRef}
+                // @ts-ignore
+                webkitdirectory="" 
+                directory="" 
+                multiple 
+                onChange={handleBulkFolderSelect}
+                className="hidden" 
+              />
+              <button 
+                onClick={() => folderInputRef.current?.click()}
+                disabled={isPushingFolder}
+                title="Upload Folder"
+                className="p-1 hover:bg-slate-100 rounded text-indigo-600 transition-colors disabled:opacity-50"
+              >
+                {isPushingFolder ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderUp className="w-4 h-4" />}
+              </button>
+              {currentPath && (
+                <button onClick={goBackPath} className="text-[10px] text-indigo-600 hover:underline">UP</button>
+              )}
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-0.5 scrollbar-hide">
             {loading ? (

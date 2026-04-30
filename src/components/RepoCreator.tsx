@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { githubApi } from '../lib/api';
 import { Repository } from '../types';
-import { X, Loader2, AlertCircle } from 'lucide-react';
+import { X, Loader2, AlertCircle, FolderPlus, FileText } from 'lucide-react';
 
 interface RepoCreatorProps {
   onCancel: () => void;
@@ -15,6 +15,61 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
   const [autoInit, setAutoInit] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadMode, setUploadMode] = useState<'empty' | 'folder'>('empty');
+  const [selectedFiles, setSelectedFiles] = useState<{ path: string, content: string }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+  };
+
+  const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    const data: { path: string, content: string }[] = [];
+    setLoading(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const path = file.webkitRelativePath.split('/').slice(1).join('/');
+        
+        // Basic filter: skip common binary/ignored dirs
+        if (
+          path.includes('node_modules/') || 
+          path.includes('.git/') || 
+          path.includes('dist/') ||
+          path.includes('.DS_Store')
+        ) continue;
+
+        // Skip binary-like extensions roughly for this demo
+        const isBinary = /\.(jpg|jpeg|png|gif|pdf|zip|exe|dll|so|o)$/i.test(file.name);
+        if (isBinary) continue;
+
+        try {
+          const content = await readFileAsText(file);
+          data.push({ path, content });
+        } catch (err) {
+          console.warn(`Skipped ${path}: could not read as text`);
+        }
+      }
+      setSelectedFiles(data);
+      if (data.length > 0 && !name) {
+        // Auto-name from folder if empty
+        const folderName = files[0].webkitRelativePath.split('/')[0];
+        setName(folderName.toLowerCase().replace(/ /g, '-'));
+      }
+    } catch (err) {
+      setError('Failed to read folder contents');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,13 +78,25 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
     setLoading(true);
     setError(null);
     try {
-      const newRepo = await githubApi.createRepo({
+      // Force auto_init: true if we're uploading a folder, so we have a 'main' branch to push to
+      const repo = await githubApi.createRepo({
         name,
         description,
         private: isPrivate,
-        auto_init: autoInit
+        auto_init: uploadMode === 'folder' ? true : autoInit
       });
-      onCreated(newRepo);
+
+      if (uploadMode === 'folder' && selectedFiles.length > 0) {
+        // Wait for GitHub to stabilize the fresh repo
+        await new Promise(r => setTimeout(r, 2000));
+        
+        await githubApi.pushFiles(repo.owner.login, repo.name, {
+            message: 'initial: import from local directory',
+            files: selectedFiles
+        });
+      }
+
+      onCreated(repo);
     } catch (err: any) {
       console.error(err);
       setError(err.response?.data?.message || 'Failed to create repository');
@@ -55,6 +122,62 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="flex gap-4 p-1 bg-slate-100 rounded-lg mb-6">
+          <button 
+            type="button"
+            onClick={() => setUploadMode('empty')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold uppercase tracking-wider rounded-md transition-all ${uploadMode === 'empty' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            <FileText className="w-3 h-3" />
+            Empty Repo
+          </button>
+          <button 
+            type="button"
+            onClick={() => setUploadMode('folder')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold uppercase tracking-wider rounded-md transition-all ${uploadMode === 'folder' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            <FolderPlus className="w-3 h-3" />
+            From Folder
+          </button>
+        </div>
+
+        {uploadMode === 'folder' && (
+          <div className="p-4 border-2 border-dashed border-indigo-100 rounded-xl bg-indigo-50/30 text-center mb-6">
+            <input 
+              type="file" 
+              ref={fileInputRef}
+              // @ts-ignore
+              webkitdirectory="" 
+              directory="" 
+              multiple 
+              onChange={handleFolderSelect}
+              className="hidden" 
+            />
+            {selectedFiles.length > 0 ? (
+              <div>
+                <p className="text-sm font-bold text-indigo-600 mb-1">{selectedFiles.length} files selected</p>
+                <button 
+                  type="button" 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-[11px] font-bold text-slate-500 hover:text-indigo-600 underline"
+                >
+                  Change Folder
+                </button>
+              </div>
+            ) : (
+              <button 
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex flex-col items-center gap-2 mx-auto"
+              >
+                <FolderPlus className="w-8 h-8 text-indigo-300" />
+                <span className="text-sm font-bold text-slate-600">Select local directory to import</span>
+                <span className="text-[10px] text-slate-400 max-w-[200px]">We'll automatically read and prepare the files for GitHub.</span>
+              </button>
+            )}
+          </div>
+        )}
+
         <div>
           <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Name</label>
           <input
@@ -92,18 +215,20 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
             </div>
           </label>
 
-          <label className="flex items-center gap-3 cursor-pointer p-3 border border-soft-border rounded-md hover:bg-slate-50 transition-colors">
-            <input
-              type="checkbox"
-              className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
-              checked={autoInit}
-              onChange={(e) => setAutoInit(e.target.checked)}
-            />
-            <div className="flex-1">
-              <p className="text-sm font-bold text-slate-800">Initialize README</p>
-              <p className="text-[11px] text-slate-500">Add a README.md to start immediately.</p>
-            </div>
-          </label>
+          {uploadMode === 'empty' && (
+            <label className="flex items-center gap-3 cursor-pointer p-3 border border-soft-border rounded-md hover:bg-slate-50 transition-colors">
+              <input
+                type="checkbox"
+                className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                checked={autoInit}
+                onChange={(e) => setAutoInit(e.target.checked)}
+              />
+              <div className="flex-1">
+                <p className="text-sm font-bold text-slate-800">Initialize README</p>
+                <p className="text-[11px] text-slate-500">Add a README.md to start immediately.</p>
+              </div>
+            </label>
+          )}
         </div>
 
         <div className="pt-4 flex gap-3">
@@ -116,7 +241,7 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
           </button>
           <button
             type="submit"
-            disabled={loading || !name}
+            disabled={loading || !name || (uploadMode === 'folder' && selectedFiles.length === 0)}
             className="flex-[2] py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-bold rounded shadow-sm transition-all flex items-center justify-center gap-2 text-sm"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Repository'}

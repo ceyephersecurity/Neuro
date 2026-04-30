@@ -210,6 +210,77 @@ async function startServer() {
     }
   });
 
+  app.post('/api/repos/:owner/:repo/push', async (req, res) => {
+    // @ts-ignore
+    const token = req.session.accessToken;
+    const { owner, repo } = req.params;
+    const { message, files, branch } = req.body;
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+
+    try {
+      const headers = { Authorization: `token ${token}` };
+      const defaultBranch = branch || 'main';
+
+      // 1. Get the current commit SHA of the branch
+      let latestCommitSha;
+      try {
+        const refRes = await axios.get(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${defaultBranch}`, { headers });
+        latestCommitSha = refRes.data.object.sha;
+      } catch (e) {
+        // If the branch specifically is missing but the repo exists, try getting the default branch first
+        const repoInfo = await axios.get(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+        const actualDefaultBranch = repoInfo.data.default_branch || 'main';
+        const refRes = await axios.get(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${actualDefaultBranch}`, { headers });
+        latestCommitSha = refRes.data.object.sha;
+      }
+
+      // 2. Get the tree SHA of the latest commit
+      const commitRes = await axios.get(`https://api.github.com/repos/${owner}/${repo}/git/commits/${latestCommitSha}`, { headers });
+      const baseTreeSha = commitRes.data.tree.sha;
+
+      // 3. Create blobs for each file
+      const treeEntries = await Promise.all(files.map(async (file: any) => {
+        const blobRes = await axios.post(`https://api.github.com/repos/${owner}/${repo}/git/blobs`, {
+          content: file.content,
+          encoding: 'utf-8'
+        }, { headers });
+        return {
+          path: file.path,
+          mode: '100644',
+          type: 'blob',
+          sha: blobRes.data.sha
+        };
+      }));
+
+      // 4. Create a new tree
+      const newTreeRes = await axios.post(`https://api.github.com/repos/${owner}/${repo}/git/trees`, {
+        base_tree: baseTreeSha,
+        tree: treeEntries
+      }, { headers });
+      const newTreeSha = newTreeRes.data.sha;
+
+      // 5. Create a new commit
+      const newCommitRes = await axios.post(`https://api.github.com/repos/${owner}/${repo}/git/commits`, {
+        message,
+        tree: newTreeSha,
+        parents: [latestCommitSha]
+      }, { headers });
+      const newCommitSha = newCommitRes.data.sha;
+
+      // 6. Update the reference
+      await axios.patch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${defaultBranch}`, {
+        sha: newCommitSha
+      }, { headers });
+
+      res.json({ success: true, commitSha: newCommitSha });
+    } catch (error) {
+      // @ts-ignore
+      console.error('Push error:', error.response?.data || error.message);
+      // @ts-ignore
+      res.status(500).json({ error: 'Failed to push files', details: error.response?.data });
+    }
+  });
+
   // --- Ollama Commit Message Generation ---
 
   app.post('/api/generate-commit-message', async (req, res) => {
