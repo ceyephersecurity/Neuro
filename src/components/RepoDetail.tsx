@@ -38,7 +38,14 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
       onRefresh();
     } catch (err: any) {
       console.error(err);
-      setStatus({ type: 'error', message: 'Failed to delete repository: ' + (err.response?.data?.message || err.message) });
+      if (err.response?.status === 403) {
+        setStatus({ 
+          type: 'error', 
+          message: 'Permission denied. This usually means you need to log out and log back in to grant GitStream AI permissions to delete repositories.' 
+        });
+      } else {
+        setStatus({ type: 'error', message: 'Failed to delete repository: ' + (err.response?.data?.message || err.message) });
+      }
       setIsDeleting(false);
     }
   };

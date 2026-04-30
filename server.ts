@@ -16,19 +16,36 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3001;
 
+  app.set('trust proxy', 1);
+
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: '100mb' }));
   app.use(cookieParser());
+  
+  const isDev = process.env.NODE_ENV !== 'production';
+
   app.use(session({
-    secret: 'github-repo-manager-secret',
+    secret: 'github-repo-manager-secret-v2', // Changed to force fresh session
     resave: false,
     saveUninitialized: false,
+    name: 'gh_session',
+    proxy: true,
     cookie: {
+      // In AI Studio preview (iframe), SameSite=None and Secure=true are usually required.
+      // However, if the user hits the direct local URL over HTTP, Secure=true will block the cookie.
       secure: true, 
       sameSite: 'none',
       httpOnly: true,
+      maxAge: 1000 * 60 * 60 * 24 * 7
     }
   }));
+
+  // Diagnostic middleware
+  app.use((req, res, next) => {
+    // @ts-ignore
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Session ID: ${req.sessionID} - HasToken: ${!!req.session.accessToken}`);
+    next();
+  });
 
   // --- GitHub OAuth Routes ---
   
