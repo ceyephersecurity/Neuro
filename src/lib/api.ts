@@ -3,6 +3,7 @@ import { Repository, FileContent, User, Commit } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
+  withCredentials: true,
 });
 
 export const authApi = {

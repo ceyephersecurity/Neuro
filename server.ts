@@ -14,7 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3001;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.set('trust proxy', 1);
 
@@ -32,7 +32,6 @@ async function startServer() {
     proxy: true,
     cookie: {
       // In AI Studio preview (iframe), SameSite=None and Secure=true are usually required.
-      // However, if the user hits the direct local URL over HTTP, Secure=true will block the cookie.
       secure: true, 
       sameSite: 'none',
       httpOnly: true,
@@ -51,7 +50,7 @@ async function startServer() {
   
   app.get('/api/auth/url', (req, res) => {
     const clientId = process.env.GITHUB_CLIENT_ID;
-    const appUrl = process.env.APP_URL || 'http://localhost:3001';
+    const appUrl = process.env.APP_URL || 'http://localhost:3000';
     const redirectUri = `${appUrl}/auth/callback`;
     const scope = 'repo delete_repo read:user';
     
@@ -396,7 +395,7 @@ Rules:
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 }
 
