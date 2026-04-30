@@ -14,9 +14,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = Number(process.env.PORT) || 3001;
 
-  app.set('trust proxy', 1);
+  app.set('trust proxy', true);
 
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: '100mb' }));
@@ -25,8 +25,8 @@ async function startServer() {
   const isDev = process.env.NODE_ENV !== 'production';
 
   app.use(session({
-    secret: 'github-repo-manager-secret-v2', // Changed to force fresh session
-    resave: false,
+    secret: 'github-repo-manager-secret-v3', // Force fresh sessions
+    resave: true,
     saveUninitialized: false,
     name: 'gh_session',
     proxy: true,
@@ -50,7 +50,7 @@ async function startServer() {
   
   app.get('/api/auth/url', (req, res) => {
     const clientId = process.env.GITHUB_CLIENT_ID;
-    const appUrl = process.env.APP_URL || 'http://localhost:3000';
+    const appUrl = process.env.APP_URL || 'http://localhost:3001';
     const redirectUri = `${appUrl}/auth/callback`;
     const scope = 'repo delete_repo read:user';
     
@@ -395,7 +395,7 @@ Rules:
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
