@@ -3,11 +3,17 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import axios from "axios";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+import { createServer as createViteServer } from "vite";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * =========================
@@ -24,14 +30,13 @@ app.use(cookieParser());
 
 /**
  * =========================
- * SIMPLE SESSION STORE
- * (replace with DB in prod)
+ * SESSION STORAGE (TEMP)
  * =========================
  */
 const sessions = new Map<string, { token: string }>();
 
 function getSession(req: express.Request) {
-  const sessionId = req.headers["x-session-id"] as string || req.cookies?.session;
+  const sessionId = req.cookies?.session;
   if (!sessionId) return null;
   return sessions.get(sessionId) || null;
 }
@@ -49,7 +54,7 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
 
 /**
  * =========================
- * AUTH ROUTES
+ * AUTH
  * =========================
  */
 
@@ -73,56 +78,39 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
 
     res.json(githubRes.data);
   } catch (err: any) {
-    res.status(500).json({
-      message: "Failed to fetch user",
-      error: err?.message
-    });
+    res.status(500).json({ message: "Failed to fetch user" });
   }
 });
 
 /**
  * =========================
- * REPO ROUTES
+ * REPOS
  * =========================
  */
 
-// LIST REPOS
 app.get("/api/repos", requireAuth, async (req, res) => {
   try {
     const token = (req as any).token;
 
     const result = await axios.get("https://api.github.com/user/repos", {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
+      headers: { Authorization: `Bearer ${token}` }
     });
 
     res.json(result.data);
-  } catch (err: any) {
+  } catch {
     res.status(500).json({ message: "Failed to fetch repos" });
   }
 });
 
-// CREATE REPO
 app.post("/api/repos", requireAuth, async (req, res) => {
   try {
     const token = (req as any).token;
-
     const { name, description, private: isPrivate, auto_init } = req.body;
 
     const result = await axios.post(
       "https://api.github.com/user/repos",
-      {
-        name,
-        description,
-        private: isPrivate,
-        auto_init
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      }
+      { name, description, private: isPrivate, auto_init },
+      { headers: { Authorization: `Bearer ${token}` } }
     );
 
     res.json(result.data);
@@ -133,47 +121,44 @@ app.post("/api/repos", requireAuth, async (req, res) => {
 
 /**
  * =========================
- * 🔥 FIXED PUSH ROUTE (YOUR 404)
+ * 🔥 FIXED PUSH ROUTE
  * =========================
  */
+
 app.post("/api/repos/:owner/:repo/push", requireAuth, async (req, res) => {
   try {
     const token = (req as any).token;
     const { owner, repo } = req.params;
     const { files, message, branch = "main" } = req.body;
 
-    if (!files || !Array.isArray(files)) {
-      return res.status(400).json({ message: "Files required" });
+    if (!Array.isArray(files)) {
+      return res.status(400).json({ message: "Files array required" });
     }
 
-    // push files sequentially
     let commitSha = "";
 
     for (const file of files) {
-      const path = file.path;
       const content = Buffer.from(file.content).toString("base64");
 
-      const putRes = await axios.put(
-        `https://api.github.com/repos/${owner}/${repo}/contents/${path}`,
+      const result = await axios.put(
+        `https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`,
         {
-          message: message || "update",
+          message: message || "update files",
           content,
           branch
         },
         {
           headers: {
-            Authorization: `Bearer ${token}`
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json"
           }
         }
       );
 
-      commitSha = putRes.data?.commit?.sha || commitSha;
+      commitSha = result.data?.commit?.sha || commitSha;
     }
 
-    res.json({
-      success: true,
-      commitSha
-    });
+    res.json({ success: true, commitSha });
 
   } catch (err: any) {
     console.error("PUSH ERROR:", err?.response?.data || err.message);
@@ -187,24 +172,23 @@ app.post("/api/repos/:owner/:repo/push", requireAuth, async (req, res) => {
 
 /**
  * =========================
- * AUTH CALLBACK (IMPORTANT FIX)
+ * AUTH CALLBACK
  * =========================
  */
+
 app.get("/auth/callback", async (req, res) => {
   try {
     const code = req.query.code as string;
 
     const tokenRes = await axios.post(
-      `https://github.com/login/oauth/access_token`,
+      "https://github.com/login/oauth/access_token",
       {
         client_id: process.env.GITHUB_CLIENT_ID,
         client_secret: process.env.GITHUB_CLIENT_SECRET,
         code
       },
       {
-        headers: {
-          Accept: "application/json"
-        }
+        headers: { Accept: "application/json" }
       }
     );
 
@@ -215,7 +199,8 @@ app.get("/auth/callback", async (req, res) => {
     sessions.set(sessionId, { token });
 
     res.cookie("session", sessionId, {
-      httpOnly: true
+      httpOnly: true,
+      sameSite: "lax"
     });
 
     res.redirect("/");
@@ -226,19 +211,38 @@ app.get("/auth/callback", async (req, res) => {
 
 /**
  * =========================
- * VITE DEV FALLBACK
+ * 🔥 PROPER VITE INTEGRATION (FIX)
  * =========================
  */
-app.use((req, res, next) => {
-  if (req.path.startsWith("/api")) return next();
-  res.send("Frontend handled by Vite");
-});
 
-/**
- * =========================
- * START SERVER
- * =========================
- */
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+async function startServer() {
+  const vite = await createViteServer({
+    server: { middlewareMode: true },
+    appType: "spa"
+  });
+
+  app.use(vite.ssrFixStacktrace);
+  app.use(vite.middlewares);
+
+  app.use("*", async (req, res, next) => {
+    try {
+      const url = req.originalUrl;
+
+      const template = await vite.transformIndexHtml(
+        url,
+        await vite.fs.readFile(path.resolve(__dirname, "index.html"), "utf-8")
+      );
+
+      res.status(200).set({ "Content-Type": "text/html" }).end(template);
+    } catch (e) {
+      vite.ssrFixStacktrace(e as Error);
+      next(e);
+    }
+  });
+
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();
