@@ -99,10 +99,17 @@ export default function RepoCreator({ onCancel, onCreated }: RepoCreatorProps) {
         // Wait for GitHub to stabilize the fresh repo
         await new Promise(r => setTimeout(r, 2000));
         
-        await githubApi.pushFiles(repo.owner.login, repo.name, {
-            message: 'initial: import from local directory',
-            files: selectedFiles.slice(0, 500) // Limit to first 500 files for stability
-        });
+        // Push files in batches to avoid 413 Payload Too Large errors
+        const BATCH_SIZE = 20;
+        for (let i = 0; i < selectedFiles.length; i += BATCH_SIZE) {
+          const batch = selectedFiles.slice(i, i + BATCH_SIZE);
+          setError(`Pushing files (${i + 1} to ${Math.min(i + BATCH_SIZE, selectedFiles.length)} of ${selectedFiles.length})...`);
+          
+          await githubApi.pushFiles(repo.owner.login, repo.name, {
+              message: `initial: import from local directory (batch ${Math.floor(i / BATCH_SIZE) + 1})`,
+              files: batch
+          });
+        }
       }
 
       onCreated(repo);

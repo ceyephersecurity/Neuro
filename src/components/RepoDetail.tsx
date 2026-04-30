@@ -71,11 +71,19 @@ export default function RepoDetail({ repo, onBack, onRefresh }: RepoDetailProps)
       }
 
       if (data.length > 0) {
-        setStatus({ type: 'success', message: `Pushing ${data.length} files... (Limited to 500 at once)` });
-        await githubApi.pushFiles(repo.owner.login, repo.name, {
-            message: `feat: bulk upload directory contents`,
-            files: data.slice(0, 500)
-        });
+        setStatus({ type: 'success', message: `Pushing ${data.length} files in batches...` });
+        
+        const BATCH_SIZE = 20;
+        for (let i = 0; i < data.length; i += BATCH_SIZE) {
+          const batch = data.slice(i, i + BATCH_SIZE);
+          setStatus({ type: 'success', message: `Pushing batch ${Math.floor(i/BATCH_SIZE) + 1}...` });
+          
+          await githubApi.pushFiles(repo.owner.login, repo.name, {
+              message: `feat: bulk upload directory contents (batch ${Math.floor(i/BATCH_SIZE) + 1})`,
+              files: batch
+          });
+        }
+        
         setStatus({ type: 'success', message: `Successfully pushed ${data.length} files!` });
         fetchContents(currentPath);
         fetchCommits();
